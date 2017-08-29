@@ -1,11 +1,14 @@
-#include <mpi.h>
 #include <stdio.h>
 #include "simann.h"
 #include "jobshop.h"
+#include "mpi_inst.h"
 
 void simulated_annealing(int** current_solution, int** configuration){
     int t_temperature = 15000, static_solution = 0, cost_solution = cost(current_solution), converged = 0;
 	double initial_temperature = 2000, cooling_rate = 0.8;
+	double comm_time = 0;
+	double t1 = 0;
+	double t2 = 0;
 	MPI_Status status;
 
 	int world_size;
@@ -62,7 +65,10 @@ void simulated_annealing(int** current_solution, int** configuration){
 		p = 0;
 		while(p < world_size) {
 			if(p != world_rank) {
+				t1 = MPI_Wtime();
 				MPI_Test(&request[p],&flag[p],&status);
+				t2 = MPI_Wtime();
+				printf("\nProcess %d test comm time:%f\n",world_rank, t2-t1);
 			}
 			p++;
 		}
@@ -72,10 +78,11 @@ void simulated_annealing(int** current_solution, int** configuration){
 			p = 0;
 			while(p < world_size) {
 				if(p != world_rank) {
-					MPI_Send(&converged, 1, MPI_INT, p, 123, MPI_COMM_WORLD);
+					comm_time += MPI_Send(&converged, 1, MPI_INT, p, 123, MPI_COMM_WORLD);
 				}
 				p++;
 			}
+			printf("\nProcess %d independent sim ann comm time:%f\n",world_rank, comm_time);
 			break;
 		}
 	}
@@ -84,7 +91,8 @@ void simulated_annealing(int** current_solution, int** configuration){
 void shared_simulated_annealing(int **best_guess, int exchange_parameter, int final_exchange, int** current_solution, int** configuration){
 	MPI_Status status;
 	int iteration = 0, exchanges = 0, t_temperature = 15000, best_cost = 0, p = 1;
-	double initial_temperature = 2000, cooling_rate = 0.8;     
+	double initial_temperature = 2000, cooling_rate = 0.8;
+	double comm_time = 0;
 
 	int world_rank;
 	MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
@@ -117,12 +125,12 @@ void shared_simulated_annealing(int **best_guess, int exchange_parameter, int fi
 			iteration = 0;
 
 			if(world_rank != 0) {
-				MPI_Send(&current_solution[0][0], JOBS*MACHINES, MPI_INT, 0, 0, MPI_COMM_WORLD);
+				comm_time += MPI_Send(&current_solution[0][0], JOBS*MACHINES, MPI_INT, 0, 0, MPI_COMM_WORLD);
 
 				if(exchanges == final_exchange-1) {
 					break;
 				} else {
-					MPI_Bcast(&current_solution[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
+					comm_time += MPI_Bcast(&current_solution[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
 					//printf("process %d, post_comm_cost:%d\n", world_rank, cost(current_solution));
 				}		
 			} else {
@@ -134,7 +142,7 @@ void shared_simulated_annealing(int **best_guess, int exchange_parameter, int fi
 						int **guess;
 						guess = alloc_2d_int();
 
-						MPI_Recv(&guess[0][0], JOBS*MACHINES, MPI_INT, p, 0, MPI_COMM_WORLD, &status);
+						comm_time += MPI_Recv(&guess[0][0], JOBS*MACHINES, MPI_INT, p, 0, MPI_COMM_WORLD, &status);
 						int guess_cost = cost(guess);
 
 						if(guess_cost <= best_cost) {
@@ -148,9 +156,10 @@ void shared_simulated_annealing(int **best_guess, int exchange_parameter, int fi
 				}
 		
 				if(exchanges == final_exchange-1) {
+					printf("\nProcess %d shared sim ann comm time:%f\n",world_rank, comm_time);
 					break;
 				} else {
-					MPI_Bcast(&best_guess[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
+					comm_time += MPI_Bcast(&best_guess[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
 					copy_matrix(best_guess, current_solution);
 					//printf("process %d, post_comm_cost:%d\n", world_rank, cost(current_solution));
 				}

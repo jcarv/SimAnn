@@ -1,16 +1,17 @@
-#include <mpi.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
 #include "jobshop.h"
 #include "simann.h"
+#include "mpi_inst.h"
 
 int JOBS, MACHINES, SWAPS, FROZEN;
 
 unsigned int seed;
 
 void master(int exchange_parameter, int final_exchange) {
+	double comm_time;
 	char *linha,*token;
 	MPI_Status status;
 
@@ -40,9 +41,9 @@ void master(int exchange_parameter, int final_exchange) {
 	load_configuration(configuration);
 
 	//envia dimensoes e configuracao
-	MPI_Bcast(&JOBS, 1, MPI_INT, 0, MPI_COMM_WORLD);
-	MPI_Bcast(&MACHINES, 1, MPI_INT, 0, MPI_COMM_WORLD);
-	MPI_Bcast(&configuration[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
+	comm_time += MPI_Bcast(&JOBS, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	comm_time += MPI_Bcast(&MACHINES, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	comm_time += MPI_Bcast(&configuration[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
 
 	int** initial_solution;
 	initial_solution = alloc_2d_int();
@@ -53,7 +54,7 @@ void master(int exchange_parameter, int final_exchange) {
 
 	//master_shared_simulated_annealing(best_guess, configuration, final_exchange);
 	shared_simulated_annealing(best_guess, exchange_parameter, final_exchange, initial_solution, configuration);
-	MPI_Bcast(&best_guess[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
+	comm_time += MPI_Bcast(&best_guess[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
 
 	simulated_annealing(best_guess, configuration);
 	
@@ -62,7 +63,7 @@ void master(int exchange_parameter, int final_exchange) {
 	best_cost = cost(best_guess);
 	int p = 1;
 	while(p < world_size) {
-		MPI_Recv(&process_cost[p], 1, MPI_INT, p, 65, MPI_COMM_WORLD, &status);
+		comm_time += MPI_Recv(&process_cost[p], 1, MPI_INT, p, 65, MPI_COMM_WORLD, &status);
 		if(process_cost[p] < best_cost) {
 			best_cost = process_cost[p];
 		}
@@ -72,12 +73,15 @@ void master(int exchange_parameter, int final_exchange) {
 
 //	MPI_IRecv(&process_cost, 1, MPI_INT, 1, 65, MPI_COMM_WORLD, &status);
 	//printf("Process: %d, Cost: %d\n",world_rank,cost(best_guess));
+	printf("\nProcess %d comm time:%f\n",world_rank, comm_time);
 	printf("best cost: %d\n", best_cost);
 	my_free(configuration);
 	my_free(best_guess);
 }
 
 void slave(int exchange_parameter, int final_exchange) {
+	double comp_time = 0;
+	double comm_time = 0;
 	//Get the number of processes;
 	int world_size;
 	MPI_Comm_size(MPI_COMM_WORLD, &world_size);
@@ -92,11 +96,11 @@ void slave(int exchange_parameter, int final_exchange) {
 
 	//recebe dimensoes e configuracao
 	MPI_Status status;
-	MPI_Bcast(&JOBS, 1, MPI_INT, 0, MPI_COMM_WORLD);
-	MPI_Bcast(&MACHINES, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	comm_time += MPI_Bcast(&JOBS, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	comm_time += MPI_Bcast(&MACHINES, 1, MPI_INT, 0, MPI_COMM_WORLD);
 	int** configuration;
 	configuration = alloc_2d_int();
-	MPI_Bcast(&configuration[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
+	comm_time += MPI_Bcast(&configuration[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
 	
 	int** initial_solution;
 	initial_solution = alloc_2d_int();
@@ -107,15 +111,16 @@ void slave(int exchange_parameter, int final_exchange) {
 
 	my_free(initial_solution);
 	initial_solution = alloc_2d_int();
-	MPI_Bcast(&initial_solution[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
+	comm_time += MPI_Bcast(&initial_solution[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
 
 	simulated_annealing(initial_solution, configuration);
 
 	int cost_solution;
 	cost_solution = cost(initial_solution);
 	//printf("%d process, cost %d\n", world_rank, cost_solution);
-	MPI_Send(&cost_solution, 1, MPI_INT, 0, 65, MPI_COMM_WORLD);
+	comm_time += MPI_Send(&cost_solution, 1, MPI_INT, 0, 65, MPI_COMM_WORLD);
 	
+	printf("\nProcess %d comm time:%f\n",world_rank, comm_time);
 	my_free(configuration);
 	my_free(initial_solution);
 }
@@ -124,9 +129,10 @@ int main(int argc, char* argv[]){
 	SWAPS = 2;
 	FROZEN = 5;
 	double t1, t2; 
-	t1 = MPI_Wtime();
 	//exchange_parameter = 1 : Comunicação continua
 	int exchange_parameter = 1, final_exchange = 8;
+
+	t1 = MPI_Wtime();
 
 	//Initialize the MPI environment
 	MPI_Init(NULL, NULL);
