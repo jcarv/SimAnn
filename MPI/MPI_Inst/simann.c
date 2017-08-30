@@ -102,7 +102,6 @@ void shared_simulated_annealing(int **best_guess, int exchange_parameter, int fi
 
 			double current_cost = cost(current_solution);
 	        double neighbour_cost = cost(neighbour_solution);
-
     	    double delta = current_cost - neighbour_cost;
     	    double p = probability(delta, initial_temperature);
 
@@ -120,7 +119,7 @@ void shared_simulated_annealing(int **best_guess, int exchange_parameter, int fi
 
 			if(world_rank != 0) {
 				MPI_Send(&current_solution[0][0], JOBS*MACHINES, MPI_INT, 0, 0, MPI_COMM_WORLD);
-
+				
 				if(exchanges == final_exchange-1) {
 					break;
 				} else {
@@ -148,10 +147,12 @@ void shared_simulated_annealing(int **best_guess, int exchange_parameter, int fi
 					}
 					p++;
 				}
-		
+				
 				if(exchanges == final_exchange-1) {
+				
 					break;
 				} else {
+					
 					MPI_Bcast(&best_guess[0][0], JOBS*MACHINES, MPI_INT, 0, MPI_COMM_WORLD);
 					copy_matrix(best_guess, current_solution);
 					//printf("process %d, post_comm_cost:%d\n", world_rank, cost(current_solution));
